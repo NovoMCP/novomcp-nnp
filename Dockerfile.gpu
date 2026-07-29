@@ -1,0 +1,46 @@
+# GPU image — NNP service with the NVIDIA ALCHEMI Toolkit batched-relaxation path.
+#
+# Enables engine="alchemi" on /api/relax-batch and /api/optimize-geometry:
+# whole-library geometry relaxation in one batched FIRE pass on the GPU
+# (MACE-MP-0 potential via nvalchemi-toolkit).
+#
+# Requires an NVIDIA GPU on the host with driver >= 580 (CUDA 13) and the
+# NVIDIA Container Toolkit. Run with `--gpus all`. The default (CPU) image is
+# `Dockerfile`; this variant is opt-in.
+FROM python:3.12-slim-bookworm
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    curl gcc g++ libxrender1 libxext6 libgomp1 libopenblas-dev \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# ALCHEMI Toolkit (CUDA 13 stack). This pulls a CUDA-13 build of torch plus the
+# bundled NVIDIA CUDA libraries and mace-torch. Installing into a fresh image
+# (no pre-existing torch/torchvision) avoids the version conflicts you hit when
+# layering it onto a Deep Learning AMI.
+RUN pip install --no-cache-dir "nvalchemi-toolkit[cu13]" mace-torch \
+      --extra-index-url https://pypi.nvidia.com
+
+# App deps. torch + ase already come from the toolkit stack above, so install
+# only the rest here (do NOT reinstall torch — it would clobber the cu13 build).
+RUN pip install --no-cache-dir \
+    fastapi==0.115.12 uvicorn==0.34.0 pydantic==2.11.1 python-dotenv==1.0.0 rdkit==2023.9.1
+
+COPY app/ app/
+COPY main.py .
+
+RUN useradd -m -u 1000 appuser && \
+    mkdir -p /app/scratch /home/appuser/.cache && \
+    chown -R appuser:appuser /app /home/appuser
+USER appuser
+
+# The toolkit's host-side auto neighbor-list method can't run inside
+# torch.compile; the service runs the ALCHEMI path in eager mode.
+ENV PORT=8032 PYTHONUNBUFFERED=1 TORCHDYNAMO_DISABLE=1
+EXPOSE 8032
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
+    CMD curl -f http://localhost:8032/health || exit 1
+
+CMD ["python", "main.py"]

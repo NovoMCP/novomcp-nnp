@@ -1,0 +1,9 @@
+# Extra dependencies for the ALCHEMI GPU batched-relaxation path (engine="alchemi").
+# Install on top of a fresh env with a CUDA-13 GPU (driver >= 580):
+#
+#   pip install "nvalchemi-toolkit[cu13]" mace-torch --extra-index-url https://pypi.nvidia.com
+#
+# This pulls a CUDA-13 build of torch + bundled CUDA libraries; do not also
+# install the CPU torch from requirements.txt into the same env.
+nvalchemi-toolkit[cu13]
+mace-torch
