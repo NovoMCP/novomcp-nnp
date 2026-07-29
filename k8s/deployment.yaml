@@ -1,0 +1,40 @@
+# Reference Kubernetes manifest for novomcp-nnp.
+# Adjust namespace, image, and (optional) auth secret for your cluster.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: novomcp-nnp
+  labels: { app: novomcp-nnp }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: novomcp-nnp } }
+  template:
+    metadata: { labels: { app: novomcp-nnp } }
+    spec:
+      containers:
+        - name: novomcp-nnp
+          image: ghcr.io/novomcp/novomcp-nnp:latest
+          ports: [ { containerPort: 8032 } ]
+          env:
+            - { name: PORT, value: "8032" }
+            # Optional inbound auth — omit for no auth (localhost/private network):
+            # - name: NNP_API_KEY
+            #   valueFrom: { secretKeyRef: { name: novomcp-nnp, key: api-key } }
+          # The default image is CPU-only. For the ALCHEMI GPU-batched path
+          # (Stage 2) schedule on a GPU node and request a GPU:
+          #   resources: { limits: { nvidia.com/gpu: "1" } }
+          resources:
+            requests: { cpu: "1", memory: "2Gi" }
+          readinessProbe:
+            httpGet: { path: /health, port: 8032 }
+            initialDelaySeconds: 20
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: novomcp-nnp
+  labels: { app: novomcp-nnp }
+spec:
+  selector: { app: novomcp-nnp }
+  ports: [ { name: http, port: 8032, targetPort: 8032 } ]
