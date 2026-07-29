@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import uvicorn
 
-from app.models.registry import initialize, compute_energy, optimize_geometry, relax_batch, get_info
+from app.models.registry import initialize, compute_energy, optimize_geometry, relax_batch, compute_energy_batch, get_info
 
 logging.basicConfig(
     format="[NovoMCP] %(name)s - %(levelname)s - %(message)s",
@@ -55,6 +55,7 @@ def _check_key(key: Optional[str]):
 class EnergyRequest(BaseModel):
     smiles: str = Field(..., description="SMILES string")
     method: str = Field("auto", description="Model: auto, ani2x, or mace")
+    engine: str = Field("ase", description="Execution engine: 'ase' (default) or 'alchemi' (ALCHEMI Toolkit GPU forward pass; falls back to ASE when unavailable)")
     charge: int = Field(0, description="Molecular charge (must be 0 — NNPs don't support charged species)")
     uhf: int = Field(0, description="Unpaired electrons (must be 0 — NNPs don't support open-shell)")
 
@@ -67,13 +68,18 @@ class EnergyResponse(BaseModel):
     method: str
     n_atoms: int
     wall_time_ms: Optional[float]
+    engine_used: Optional[str] = None
+    note: Optional[str] = None
 
 class BatchEnergyRequest(BaseModel):
     smiles_list: list[str] = Field(..., max_length=100)
     method: str = Field("auto")
+    engine: str = Field("alchemi", description="'alchemi' (GPU-batched forward, default) or 'ase' (per-molecule)")
 
 class BatchEnergyResponse(BaseModel):
     results: list[Optional[EnergyResponse]]
+    engine_used: str
+    note: Optional[str] = None
     count: int
     elapsed_ms: int
 
@@ -233,7 +239,11 @@ async def api_compute_energy(req: EnergyRequest, x_api_key: Optional[str] = Head
     _reject_charged(req.smiles, req.charge, req.uhf)
 
     positions, species = _smiles_to_geometry(req.smiles)
-    result = compute_energy(positions, species, method=req.method)
+    # Route through compute_energy_batch (batch of one) so engine selection lives
+    # in one place. Stage: 'alchemi' falls back to ASE when the GPU/toolkit is absent.
+    results, engine_used, note = compute_energy_batch(
+        [(positions, species)], method=req.method, engine=req.engine)
+    result = results[0]
 
     if not result.success:
         raise HTTPException(status_code=500, detail=result.error or "Computation failed")
@@ -247,6 +257,8 @@ async def api_compute_energy(req: EnergyRequest, x_api_key: Optional[str] = Head
         method=result.method,
         n_atoms=result.n_atoms,
         wall_time_ms=result.wall_time_ms,
+        engine_used=engine_used,
+        note=note,
     )
 
 
@@ -344,29 +356,35 @@ async def api_relax_batch(req: RelaxBatchRequest, x_api_key: Optional[str] = Hea
 @app.post("/api/batch-energy", response_model=BatchEnergyResponse)
 async def api_batch_energy(req: BatchEnergyRequest, x_api_key: Optional[str] = Header(None)):
     _check_key(x_api_key)
+    t0 = time.time()
 
-    from concurrent.futures import ThreadPoolExecutor
-
-    def _process_one(smi: str):
+    # SMILES → geometry per item; a bad input drops that slot to null.
+    valid = []  # (orig_index, smiles, positions, species)
+    for i, smi in enumerate(req.smiles_list):
         try:
             positions, species = _smiles_to_geometry(smi)
-            r = compute_energy(positions, species, method=req.method)
-            if r.success:
-                return EnergyResponse(
-                    smiles=smi, energy_ev=r.energy_ev, energy_kcal_mol=r.energy_kcal_mol,
-                    forces_max_ev_ang=r.forces_max_ev_ang, forces_rms_ev_ang=r.forces_rms_ev_ang,
-                    method=r.method, n_atoms=r.n_atoms, wall_time_ms=r.wall_time_ms,
-                )
+            valid.append((i, smi, positions, species))
         except Exception:
-            pass
-        return None
+            continue
 
-    t0 = time.time()
-    with ThreadPoolExecutor(max_workers=min(4, len(req.smiles_list))) as pool:
-        results = list(pool.map(_process_one, req.smiles_list))
+    nnp_results, engine_used, note = compute_energy_batch(
+        [(pos, spec) for (_, _, pos, spec) in valid], method=req.method, engine=req.engine)
+
+    results: list[Optional[EnergyResponse]] = [None] * len(req.smiles_list)
+    for slot, (orig_i, smi, _, _) in enumerate(valid):
+        r = nnp_results[slot]
+        if r.success:
+            results[orig_i] = EnergyResponse(
+                smiles=smi, energy_ev=r.energy_ev, energy_kcal_mol=r.energy_kcal_mol,
+                forces_max_ev_ang=r.forces_max_ev_ang, forces_rms_ev_ang=r.forces_rms_ev_ang,
+                method=r.method, n_atoms=r.n_atoms, wall_time_ms=r.wall_time_ms,
+                engine_used=engine_used, note=note,
+            )
 
     return BatchEnergyResponse(
-        results=results, count=len(results), elapsed_ms=round((time.time() - t0) * 1000),
+        results=results, engine_used=engine_used, note=note,
+        count=sum(1 for x in results if x is not None),
+        elapsed_ms=round((time.time() - t0) * 1000),
     )
 
 

@@ -461,6 +461,78 @@ def relax_batch(
     return results, engine_used, note
 
 
+def _alchemi_energy(systems) -> list:
+    """Batched single-point energy + forces via the ALCHEMI MACE forward pass
+    (no relaxation — atoms are not moved). Returns a list of NnpResult aligned to
+    `systems`. Reuses the validated compute path: a zero-step FIRE gives us the
+    toolkit's compute() with correctly-built neighbors."""
+    os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+    import time as _time
+    from nvalchemi.data import AtomicData, Batch
+    from nvalchemi.dynamics import FIRE, ConvergenceHook, DynamicsStage
+    try:
+        import torch._dynamo as _dynamo
+        _dynamo.config.disable = True
+    except Exception:
+        pass
+
+    model = _get_alchemi_model()
+    hooks = model.make_neighbor_hooks()
+    datas = []
+    for positions, species in systems:
+        n = len(species)
+        datas.append(AtomicData(
+            atomic_numbers=torch.tensor(list(species), dtype=torch.long),
+            positions=torch.tensor(np.asarray(positions), dtype=torch.float32),
+            forces=torch.zeros((n, 3), dtype=torch.float32),
+            energy=torch.zeros((1, 1), dtype=torch.float32),
+        ))
+    batch = Batch.from_data_list(datas, device="cuda")
+
+    opt = FIRE(model=model, dt=0.1, n_steps=1,
+               convergence_hook=ConvergenceHook.from_fmax(0.05), hooks=hooks)
+    opt.compile_step = False
+    t0 = _time.time()
+    with opt:
+        opt._call_hooks(DynamicsStage.BEFORE_COMPUTE, batch)  # build neighbors
+        opt.compute(batch)                                    # model forward → energy/forces
+    per_ms = round((_time.time() - t0) * 1000 / max(1, len(systems)), 1)
+
+    results = []
+    for i, (positions, species) in enumerate(systems):
+        ad = batch.get_data(i)
+        energy_ev = float(ad.energy.reshape(-1)[0]) if ad.energy is not None else None
+        forces = ad.forces
+        fmax = float(forces.abs().max()) if forces is not None else None
+        frms = float((forces ** 2).mean().sqrt()) if forces is not None else None
+        results.append(NnpResult(
+            success=True,
+            energy_ev=round(energy_ev, 6) if energy_ev is not None else None,
+            energy_kcal_mol=round(energy_ev * EV_TO_KCAL, 4) if energy_ev is not None else None,
+            forces_max_ev_ang=round(fmax, 6) if fmax is not None else None,
+            forces_rms_ev_ang=round(frms, 6) if frms is not None else None,
+            method="MACE-MP-0-ALCHEMI",
+            wall_time_ms=per_ms,
+            n_atoms=len(species),
+        ))
+    return results
+
+
+def compute_energy_batch(systems, method: str = "auto", engine: str = "alchemi"):
+    """Batched single-point energy. engine='alchemi' evaluates the whole batch in
+    one GPU forward pass (MACE-MP-0) when available; otherwise per-molecule ASE.
+    Returns (results, engine_used, note)."""
+    use_alchemi = engine == "alchemi" and _alchemi_available()
+    engine_used = "alchemi" if use_alchemi else "ase"
+    note = None
+    if engine == "alchemi" and not use_alchemi:
+        note = "ALCHEMI Toolkit backend unavailable in this image; used ASE fallback."
+    if use_alchemi:
+        return _alchemi_energy(systems), engine_used, note
+    results = [compute_energy(pos, spec, method=method) for pos, spec in systems]
+    return results, engine_used, note
+
+
 def get_info() -> dict:
     return {
         "models": {k: {"available": v} for k, v in _available.items()},
