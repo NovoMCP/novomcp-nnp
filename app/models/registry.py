@@ -9,6 +9,7 @@ All models compute energies and forces on molecular geometries.
 """
 
 import logging
+import os
 import time
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
@@ -321,22 +322,110 @@ def optimize_geometry(
         )
 
 
+_alchemi_model = None  # cached MACEWrapper for the ALCHEMI batched path
+
+
 def _alchemi_available() -> bool:
     """Whether the NVIDIA ALCHEMI Toolkit GPU-batched relaxation path can run.
 
-    Stage 1: the batched implementation is not built yet, so this always returns
-    False and engine='alchemi' transparently falls back to the ASE path. Stage 2
-    wires the real check (nvalchemi-toolkit import + CUDA) and the batched path.
+    Requires the toolkit + mace-torch installed and a CUDA GPU present. The
+    default CPU image ships without the toolkit, so this returns False there and
+    engine='alchemi' transparently falls back to the ASE path.
     """
-    return False
+    try:
+        import nvalchemi  # noqa: F401
+        from nvalchemi.models.mace import MACEWrapper  # noqa: F401
+    except Exception:
+        return False
+    try:
+        return bool(torch is not None and torch.cuda.is_available())
+    except Exception:
+        return False
 
 
-def _relax_batch_alchemi(systems, method, fmax, max_steps) -> list["OptimizeResult"]:
-    """GPU-batched relaxation via the NVIDIA ALCHEMI Toolkit. Wired in Stage 2.
+def _get_alchemi_model():
+    """Load + cache MACE-MP-0 wrapped in the ALCHEMI Toolkit's MACEWrapper (GPU)."""
+    global _alchemi_model
+    if _alchemi_model is None:
+        from nvalchemi.models.mace import MACEWrapper
+        from mace.calculators.foundations_models import mace_mp
+        raw = mace_mp(model="small", device="cuda", default_dtype="float32").models[0]
+        _alchemi_model = MACEWrapper(raw).to("cuda").eval()
+        logger.info("ALCHEMI MACE-MP-0 model loaded on GPU")
+    return _alchemi_model
 
-    Never reached while _alchemi_available() is False.
+
+def _relax_batch_alchemi(systems, method, fmax, max_steps) -> list:
+    """GPU-batched geometry relaxation via the NVIDIA ALCHEMI Toolkit.
+
+    Relaxes every system in one batched FIRE pass on the GPU (MACE-MP-0 potential).
+    `method` is advisory here — the ALCHEMI path uses MACE-MP-0. Returns a list of
+    OptimizeResult aligned to `systems`.
     """
-    raise NotImplementedError("ALCHEMI batched relaxation is not built in this image (Stage 2)")
+    # The toolkit's host-side auto neighbor-list method can't run inside
+    # torch.compile; disable Dynamo and use eager (opt.compile_step=False).
+    os.environ.setdefault("TORCHDYNAMO_DISABLE", "1")
+    import time as _time
+    from nvalchemi.data import AtomicData, Batch
+    from nvalchemi.dynamics import FIRE, ConvergenceHook
+    from ase.data import chemical_symbols
+    try:
+        import torch._dynamo as _dynamo
+        _dynamo.config.disable = True
+    except Exception:
+        pass
+
+    model = _get_alchemi_model()
+    hooks = model.make_neighbor_hooks()
+
+    # Build AtomicData with forces/energy buffers pre-allocated so FIRE's first
+    # pre_update finds them and compute() writes real values into them.
+    datas = []
+    for positions, species in systems:
+        n = len(species)
+        datas.append(AtomicData(
+            atomic_numbers=torch.tensor(list(species), dtype=torch.long),
+            positions=torch.tensor(np.asarray(positions), dtype=torch.float32),
+            forces=torch.zeros((n, 3), dtype=torch.float32),
+            energy=torch.zeros((1, 1), dtype=torch.float32),
+        ))
+    batch = Batch.from_data_list(datas, device="cuda")
+
+    t0 = _time.time()
+    opt = FIRE(model=model, dt=0.1, n_steps=max_steps,
+               convergence_hook=ConvergenceHook.from_fmax(fmax), hooks=hooks)
+    opt.compile_step = False
+    with opt:
+        result = opt.run(batch)
+    wall_ms = round((_time.time() - t0) * 1000, 1)
+    per_ms = round(wall_ms / max(1, len(systems)), 1)
+
+    results = []
+    for i, (positions, species) in enumerate(systems):
+        ad = result.get_data(i)
+        pos = ad.positions.detach().cpu().numpy()
+        energy_ev = float(ad.energy.reshape(-1)[0]) if ad.energy is not None else None
+        fmax_val = float(ad.forces.abs().max()) if ad.forces is not None else None
+        converged = fmax_val is not None and fmax_val <= fmax
+        n = len(species)
+        xyz_lines = [str(n), f"Energy: {energy_ev:.6f} eV"]
+        for j in range(n):
+            x, y, z = pos[j]
+            xyz_lines.append(f"{chemical_symbols[species[j]]:2s} {x:14.8f} {y:14.8f} {z:14.8f}")
+        results.append(OptimizeResult(
+            success=True,
+            energy_ev=round(energy_ev, 6) if energy_ev is not None else None,
+            energy_kcal_mol=round(energy_ev * EV_TO_KCAL, 4) if energy_ev is not None else None,
+            optimized_positions=pos.tolist(),
+            optimized_xyz="\n".join(xyz_lines) + "\n",
+            forces_max_ev_ang=round(fmax_val, 6) if fmax_val is not None else None,
+            converged=converged,
+            n_steps=max_steps,
+            method="MACE-MP-0-ALCHEMI-FIRE",
+            wall_time_ms=per_ms,
+            n_atoms=n,
+        ))
+    return results
 
 
 def relax_batch(
