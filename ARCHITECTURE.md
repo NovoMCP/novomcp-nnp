@@ -54,7 +54,7 @@ Compute molecular energy and atomic forces using neural network potentials. Acce
 ```
 the NovoMCP engine (tools.py)
   → _call_service("novomcp-nnp", "/api/compute-energy", {...})
-  → novomcp-nnp.internal.ashymoss-d55ab909.eastus.azurecontainerapps.io:8032
+  → novomcp-nnp:8032  (the address you set via NOVOMCP_NNP_URL)
 ```
 
 ### Request flow
