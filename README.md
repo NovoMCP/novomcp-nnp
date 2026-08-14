@@ -24,15 +24,18 @@ For the GPU path: `docker build -f Dockerfile.gpu -t novomcp-nnp:gpu . && docker
 
 ## Run
 
+Pull the published image and run it — no build required:
+
 ```bash
-docker build -t novomcp-nnp .
-docker run -p 8032:8032 novomcp-nnp
+docker run -p 8032:8032 ghcr.io/novomcp/novomcp-nnp:latest
 
 curl -s localhost:8032/health
 curl -s -X POST localhost:8032/api/relax-batch \
   -H 'Content-Type: application/json' \
   -d '{"smiles_list":["CCO","CCCO"]}'
 ```
+
+Or build from source: `docker build -t novomcp-nnp . && docker run -p 8032:8032 novomcp-nnp`.
 
 A relaxed molecule comes back with `converged: true`, an `optimized_xyz`, and a real energy.
 
