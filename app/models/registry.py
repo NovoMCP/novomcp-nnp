@@ -2,7 +2,7 @@
 Neural Network Potential Model Registry
 
 Manages loading and inference for:
-- MACE-MP-0 (Materials Project universal potential)
+- MACE-MPA-0 (Materials Project + Alexandria universal potential)
 - ANI-2x (organic molecules, H/C/N/O/F/S/Cl)
 
 All models compute energies and forces on molecular geometries.
@@ -70,17 +70,17 @@ def _load_ani2x():
 
 
 def _load_mace():
-    """Load MACE-MP-0 universal potential."""
+    """Load MACE-MPA-0 universal potential."""
     try:
         from mace.calculators import mace_mp
         t0 = time.time()
-        calc = mace_mp(model="small", device="cpu", default_dtype="float32")
+        calc = mace_mp(model="medium-mpa-0", device="cpu", default_dtype="float32")
         _models["mace"] = calc
         _available["mace"] = True
-        logger.info(f"MACE-MP-0 loaded in {time.time() - t0:.1f}s")
+        logger.info(f"MACE-MPA-0 loaded in {time.time() - t0:.1f}s")
     except Exception as e:
         _available["mace"] = False
-        logger.warning(f"MACE-MP-0 not available: {e}")
+        logger.warning(f"MACE-MPA-0 not available: {e}")
 
 
 def compute_energy(
@@ -162,7 +162,7 @@ def _compute_ani2x(positions: np.ndarray, species: list[int]) -> NnpResult:
 
 
 def _compute_mace(positions: np.ndarray, species: list[int]) -> NnpResult:
-    """Compute with MACE-MP-0 via ASE calculator."""
+    """Compute with MACE-MPA-0 via ASE calculator."""
     from ase import Atoms
 
     calc = _models["mace"]
@@ -179,7 +179,7 @@ def _compute_mace(positions: np.ndarray, species: list[int]) -> NnpResult:
         energy_kcal_mol=round(float(energy_ev) * EV_TO_KCAL, 4),
         forces_max_ev_ang=round(float(np.max(np.abs(forces))), 6),
         forces_rms_ev_ang=round(float(np.sqrt(np.mean(forces ** 2))), 6),
-        method="MACE-MP-0",
+        method="MACE-MPA-0",
     )
 
 
@@ -308,7 +308,7 @@ def optimize_geometry(
             forces_max_ev_ang=round(float(np.max(np.abs(final_forces))), 6),
             converged=bool(converged),
             n_steps=n_steps,
-            method=f"{'MACE-MP-0' if method == 'mace' else 'ANI-2x'}-BFGS",
+            method=f"{'MACE-MPA-0' if method == 'mace' else 'ANI-2x'}-BFGS",
             wall_time_ms=wall_ms,
             n_atoms=n,
         )
@@ -344,22 +344,22 @@ def _alchemi_available() -> bool:
 
 
 def _get_alchemi_model():
-    """Load + cache MACE-MP-0 wrapped in the ALCHEMI Toolkit's MACEWrapper (GPU)."""
+    """Load + cache MACE-MPA-0 wrapped in the ALCHEMI Toolkit's MACEWrapper (GPU)."""
     global _alchemi_model
     if _alchemi_model is None:
         from nvalchemi.models.mace import MACEWrapper
         from mace.calculators.foundations_models import mace_mp
-        raw = mace_mp(model="small", device="cuda", default_dtype="float32").models[0]
+        raw = mace_mp(model="medium-mpa-0", device="cuda", default_dtype="float32").models[0]
         _alchemi_model = MACEWrapper(raw).to("cuda").eval()
-        logger.info("ALCHEMI MACE-MP-0 model loaded on GPU")
+        logger.info("ALCHEMI MACE-MPA-0 model loaded on GPU")
     return _alchemi_model
 
 
 def _relax_batch_alchemi(systems, method, fmax, max_steps) -> list:
     """GPU-batched geometry relaxation via the NVIDIA ALCHEMI Toolkit.
 
-    Relaxes every system in one batched FIRE pass on the GPU (MACE-MP-0 potential).
-    `method` is advisory here — the ALCHEMI path uses MACE-MP-0. Returns a list of
+    Relaxes every system in one batched FIRE pass on the GPU (MACE-MPA-0 potential).
+    `method` is advisory here — the ALCHEMI path uses MACE-MPA-0. Returns a list of
     OptimizeResult aligned to `systems`.
     """
     # The toolkit's host-side auto neighbor-list method can't run inside
@@ -421,7 +421,7 @@ def _relax_batch_alchemi(systems, method, fmax, max_steps) -> list:
             forces_max_ev_ang=round(fmax_val, 6) if fmax_val is not None else None,
             converged=converged,
             n_steps=max_steps,
-            method="MACE-MP-0-ALCHEMI-FIRE",
+            method="MACE-MPA-0-ALCHEMI-FIRE",
             wall_time_ms=per_ms,
             n_atoms=n,
         ))
@@ -511,7 +511,7 @@ def _alchemi_energy(systems) -> list:
             energy_kcal_mol=round(energy_ev * EV_TO_KCAL, 4) if energy_ev is not None else None,
             forces_max_ev_ang=round(fmax, 6) if fmax is not None else None,
             forces_rms_ev_ang=round(frms, 6) if frms is not None else None,
-            method="MACE-MP-0-ALCHEMI",
+            method="MACE-MPA-0-ALCHEMI",
             wall_time_ms=per_ms,
             n_atoms=len(species),
         ))
@@ -520,7 +520,7 @@ def _alchemi_energy(systems) -> list:
 
 def compute_energy_batch(systems, method: str = "auto", engine: str = "alchemi"):
     """Batched single-point energy. engine='alchemi' evaluates the whole batch in
-    one GPU forward pass (MACE-MP-0) when available; otherwise per-molecule ASE.
+    one GPU forward pass (MACE-MPA-0) when available; otherwise per-molecule ASE.
     Returns (results, engine_used, note)."""
     use_alchemi = engine == "alchemi" and _alchemi_available()
     engine_used = "alchemi" if use_alchemi else "ase"

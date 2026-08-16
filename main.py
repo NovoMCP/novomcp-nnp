@@ -3,7 +3,7 @@ NovoMCP Neural Network Potentials Service
 
 Fast energy and force computation using pre-trained neural network potentials:
 - ANI-2x: Organic molecules (H, C, N, O, F, S, Cl)
-- MACE-MP-0: Universal potential (all elements)
+- MACE-MPA-0: Universal potential (all elements, MIT-licensed)
 
 Orders of magnitude faster than DFT, ~10x faster than xTB for single-point energies.
 """
@@ -32,7 +32,7 @@ API_KEY = os.getenv("NNP_API_KEY", "")
 
 app = FastAPI(
     title="NovoMCP Neural Potentials",
-    description="Neural network potential inference: ANI-2x, MACE-MP-0 for fast energy/force computation",
+    description="Neural network potential inference: ANI-2x, MACE-MPA-0 for fast energy/force computation",
     version="1.0.0",
 )
 

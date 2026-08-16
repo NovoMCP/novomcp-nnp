@@ -1,0 +1,14 @@
+NovoMCP novomcp-nnp
+
+This service wraps several third-party components, each carrying its own
+license. Their licenses are DISTINCT and do not extend to one another.
+
+- This service uses the NVIDIA ALCHEMI Toolkit (Apache-2.0,
+  https://github.com/NVIDIA/nvalchemi-toolkit) as the batched-relaxation engine.
+
+- The interatomic potential is MACE-MPA-0 (MIT,
+  https://github.com/ACEsuit/mace-foundations), loaded via mace-torch (MIT).
+  The Apache-2.0 of the ALCHEMI Toolkit does not extend to the potential;
+  MACE-MPA-0 carries its own MIT license.
+
+- ANI-2x (via TorchANI) is used for organic molecules; see its own license.

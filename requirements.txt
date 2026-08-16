@@ -9,5 +9,5 @@ httpx>=0.25.0
 ase>=3.22.0
 
 # Neural network potentials
-mace-torch>=0.3.0
+mace-torch>=0.3.10
 torchani>=2.2.4

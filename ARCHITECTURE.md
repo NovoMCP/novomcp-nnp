@@ -13,7 +13,7 @@ Compute molecular energy and atomic forces using neural network potentials. Acce
 
 - **Models available:**
   - `ani2x` — ANI-2x (University of Florida). Covers H, C, N, O, F, S, Cl. Fastest for organic drug-like molecules.
-  - `mace` — MACE-MP-0 (Materials Project universal potential). Covers all elements. Broader coverage, slightly slower.
+  - `mace` — MACE-MPA-0 (Materials Project + Alexandria universal potential, MIT-licensed). Covers all elements. Broader coverage, slightly slower.
   - `auto` — Selects ANI-2x for organic molecules (H/C/N/O/F/S/Cl only), MACE for anything with other elements.
 - **Typical runtime:** 5-50ms per molecule (vs 1-10s for xTB, minutes for DFT)
 - **Use cases:**
@@ -37,14 +37,16 @@ Compute molecular energy and atomic forces using neural network potentials. Acce
 - **Speed:** ~5-20ms per molecule on CPU
 - **Limitations:** Only 7 elements supported; no metals, no boron, no iodine/bromine
 
-### MACE-MP-0
-- **Source:** MACE (github.com/ACEsuit/mace)
+### MACE-MPA-0
+- **Description:** MACE-MPA-0 (Materials Project + Alexandria training set), MIT-licensed medium-size foundation potential from ACEsuit.
+- **Source:** MACE foundation models (github.com/ACEsuit/mace-foundations)
+- **License:** MIT
 - **Paper:** Batatia et al., "A foundation model for atomistic simulations" (2024)
-- **Elements:** All elements (universal potential, trained on Materials Project DFT database)
+- **Elements:** All elements (universal potential, trained on Materials Project + Alexandria DFT data)
 - **Architecture:** Equivariant message passing with higher-order many-body interactions (E(3)-equivariant)
-- **Training data:** ~150K structures from Materials Project (PBE functional)
+- **Training data:** Materials Project + Alexandria structures (PBE functional)
 - **Accuracy:** Good for structures and relative energies; less accurate than ANI-2x for absolute energies of organic molecules
-- **Speed:** ~20-100ms per molecule on CPU
+- **Speed:** ~20-100ms per molecule on CPU (medium-size; more accurate but heavier than the earlier small model)
 - **Strengths:** Handles any element, metallic systems, inorganic molecules
 
 ---
@@ -70,12 +72,12 @@ the NovoMCP engine (tools.py)
 ```
 ANI-2x elements = {H, C, N, O, F, S, Cl}
 if all atoms in molecule are ANI-2x elements → use ANI-2x (faster, more accurate for organics)
-else → use MACE-MP-0 (universal, handles any element)
+else → use MACE-MPA-0 (universal, handles any element)
 ```
 
 ### Startup sequence
 1. Load ANI-2x via TorchANI (ensemble of 8 NNs, ~200MB in memory)
-2. Load MACE-MP-0 via mace_mp("small") (~50MB in memory)
+2. Load MACE-MPA-0 via mace_mp("medium-mpa-0") (medium-size checkpoint)
 3. Both models run on CPU (no GPU needed for inference)
 4. Health check reports which models loaded
 
@@ -98,7 +100,7 @@ else → use MACE-MP-0 (universal, handles any element)
 | Method | Typical time per molecule | Accuracy (organic) | Elements |
 |---|---|---|---|
 | ANI-2x (novomcp-nnp) | 5-20ms | ~1 kcal/mol MAE | H/C/N/O/F/S/Cl |
-| MACE-MP-0 (novomcp-nnp) | 20-100ms | ~3-5 kcal/mol MAE | All |
+| MACE-MPA-0 (novomcp-nnp) | 20-100ms | ~3-5 kcal/mol MAE | All |
 | GFN2-xTB (novomcp-qm) | 1-10s | ~3-5 kcal/mol MAE | All (up to Rn) |
 | DFT (B3LYP/6-31G*) | 1-60 min | Reference | All |
 | CCSD(T)/CBS | Hours | Gold standard | Light elements |
@@ -136,7 +138,7 @@ novomcp-nnp/
 ├── main.py                      # FastAPI app, endpoints, SMILES→geometry conversion
 ├── app/
 │   └── models/
-│       └── registry.py          # Model loading, inference dispatch, ANI-2x + MACE
+│       └── registry.py          # Model loading, inference dispatch, ANI-2x + MACE-MPA-0
 ├── Dockerfile
 ├── requirements.txt
 └── .github/workflows/deploy-azure.yml
