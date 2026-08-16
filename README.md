@@ -3,7 +3,7 @@
 Neural network potential service for the [NovoMCP](https://github.com/NovoMCP/novomcp) engine — fast energies, forces, and geometry optimization from pretrained NNPs:
 
 - **ANI-2x** (TorchANI) — organic molecules (H, C, N, O, F, S, Cl)
-- **MACE-MP-0** — universal potential (all elements)
+- **MACE-MPA-0** — universal potential (all elements, MIT-licensed)
 
 Orders of magnitude faster than DFT. Neutral, closed-shell only — use a QM service for charged/open-shell systems.
 
@@ -18,7 +18,7 @@ Orders of magnitude faster than DFT. Neutral, closed-shell only — use a QM ser
 | `POST` | `/api/batch-energy` | energies for a list of molecules |
 | `POST` | `/api/compare-methods` | run every model on one molecule |
 
-**`engine` field** (`/api/optimize-geometry`, `/api/relax-batch`): `ase` (BFGS, the CPU default) or `alchemi` — whole-library relaxation in one batched pass on the GPU via the [NVIDIA ALCHEMI Toolkit](https://github.com/NVIDIA/nvalchemi-toolkit) (FIRE + MACE-MP-0). The `alchemi` path runs when you use the **GPU image** and a GPU is present (see [`GPU.md`](./GPU.md)); otherwise it transparently falls back to ASE, and the response's `engine_used` tells you which actually ran. Per-item failures in a batch (bad SMILES, charged/open-shell) come back as `null` without sinking the batch.
+**`engine` field** (`/api/optimize-geometry`, `/api/relax-batch`): `ase` (BFGS, the CPU default) or `alchemi` — whole-library relaxation in one batched pass on the GPU via the [NVIDIA ALCHEMI Toolkit](https://github.com/NVIDIA/nvalchemi-toolkit) (FIRE + MACE-MPA-0). The `alchemi` path runs when you use the **GPU image** and a GPU is present (see [`GPU.md`](./GPU.md)); otherwise it transparently falls back to ASE, and the response's `engine_used` tells you which actually ran. Per-item failures in a batch (bad SMILES, charged/open-shell) come back as `null` without sinking the batch.
 
 For the GPU path: `docker build -f Dockerfile.gpu -t novomcp-nnp:gpu . && docker run --gpus all -p 8032:8032 novomcp-nnp:gpu`. Full guide (GPU/driver requirements, how to get a GPU, verification) in [`GPU.md`](./GPU.md).
 

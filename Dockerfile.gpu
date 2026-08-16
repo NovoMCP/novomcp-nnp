@@ -2,7 +2,7 @@
 #
 # Enables engine="alchemi" on /api/relax-batch and /api/optimize-geometry:
 # whole-library geometry relaxation in one batched FIRE pass on the GPU
-# (MACE-MP-0 potential via nvalchemi-toolkit).
+# (MACE-MPA-0 (MIT) potential via nvalchemi-toolkit).
 #
 # Requires an NVIDIA GPU on the host with driver >= 580 (CUDA 13) and the
 # NVIDIA Container Toolkit. Run with `--gpus all`. The default (CPU) image is
@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y \
 # bundled NVIDIA CUDA libraries and mace-torch. Installing into a fresh image
 # (no pre-existing torch/torchvision) avoids the version conflicts you hit when
 # layering it onto a Deep Learning AMI.
-RUN pip install --no-cache-dir "nvalchemi-toolkit[cu13]" mace-torch \
+RUN pip install --no-cache-dir "nvalchemi-toolkit[cu13]" "mace-torch>=0.3.10" \
       --extra-index-url https://pypi.nvidia.com
 
 # App deps. torch + ase already come from the toolkit stack above, so install

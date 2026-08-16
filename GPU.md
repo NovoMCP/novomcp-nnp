@@ -3,7 +3,7 @@
 The default `novomcp-nnp` image is **CPU-only** and relaxes molecules one at a
 time (ASE BFGS). The optional **ALCHEMI GPU path** relaxes a whole library in a
 single batched pass on the GPU, using the [NVIDIA ALCHEMI Toolkit](https://github.com/NVIDIA/nvalchemi-toolkit)
-(FIRE optimizer + MACE-MP-0 potential).
+(FIRE optimizer + MACE-MPA-0 (MIT) potential).
 
 It activates when **all** of these are true:
 - you run the **GPU image** (`Dockerfile.gpu`, which installs the toolkit), and
@@ -46,7 +46,7 @@ docker build -f Dockerfile.gpu -t novomcp-nnp:gpu .
 docker run --gpus all -p 8032:8032 novomcp-nnp:gpu
 ```
 
-First boot downloads the MACE-MP-0 weights (~a few hundred MB) and warms the
+First boot downloads the MACE-MPA-0 weights (~a few hundred MB) and warms the
 model — allow a minute or two before the first request. `/health` reports
 readiness.
 
@@ -60,8 +60,9 @@ curl -s -X POST localhost:8032/api/relax-batch \
 
 A working GPU path returns `"engine_used": "alchemi"` and, per molecule,
 `converged: true` with a real energy and relaxed `optimized_xyz`. Reference
-values (MACE-MP-0): ethanol ≈ **−46.6 eV**, propanol ≈ **−63.1 eV**, acetic acid
-≈ **−46.3 eV**, all to `fmax < 0.05 eV/Å`.
+values (MACE-MPA-0): ethanol, propanol, and acetic acid each relax to
+`fmax < 0.05 eV/Å` with a real per-molecule energy (absolute values are
+potential-specific — re-baseline them against MACE-MPA-0 on first GPU run).
 
 If you instead see `"engine_used": "ase"` with a `note` about the ALCHEMI
 backend being unavailable, the GPU or toolkit isn't visible — check `nvidia-smi`
@@ -79,7 +80,7 @@ inside the container (`docker run --gpus all novomcp-nnp:gpu nvidia-smi`).
   can't run inside `torch.compile`, so the service runs the ALCHEMI path in
   eager mode (`TORCHDYNAMO_DISABLE=1`, set in the image). This is correct and
   still GPU-batched; it just skips graph compilation.
-- **Potential.** The ALCHEMI path uses **MACE-MP-0** regardless of the `method`
-  field (`method` still selects ANI-2x/MACE for the CPU ASE path). MACE-MP-0's
+- **Potential.** The ALCHEMI path uses **MACE-MPA-0** regardless of the `method`
+  field (`method` still selects ANI-2x/MACE for the CPU ASE path). MACE-MPA-0's
   absolute energies differ from ANI-2x's — compare like-for-like.
 - **Neutral, closed-shell only** — same limitation as the CPU path.
