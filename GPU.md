@@ -84,3 +84,33 @@ inside the container (`docker run --gpus all novomcp-nnp:gpu nvidia-smi`).
   field (`method` still selects ANI-2x/MACE for the CPU ASE path). MACE-MPA-0's
   absolute energies differ from ANI-2x's — compare like-for-like.
 - **Neutral, closed-shell only** — same limitation as the CPU path.
+
+## NVIDIA DGX Spark / GB10 (Grace Blackwell, aarch64 + sm_121)
+
+Verified end-to-end on a DGX Spark (GB10, CUDA 13, driver 580) on 2026-09-28:
+MACE-MPA-0 relaxes correctly (ethanol −46.2 eV, matching the x86 A10G reference)
+via **both** the ASE and ALCHEMI-batched engines, and ANI-2x runs. The cu13
+torch wheels ship sm_120 kernels that forward-compat to sm_121, so **no
+source-built torch is needed** — the same `Dockerfile.gpu` works.
+
+Two Grace/aarch64 workarounds are required, and the image applies both
+automatically via `docker-entrypoint.sh` (arch-gated — no effect on x86):
+
+- **`OMP_NUM_THREADS` must be set (bounded).** Unset, the bundled NVPL / ARM
+  Compute libraries spawn unbounded OpenMP threads at import-time static-init on
+  the many-core Grace CPU and corrupt the allocator (`malloc(): corrupted top
+  size`) before any user code runs. The entrypoint defaults it to 8; override
+  with `-e OMP_NUM_THREADS=N`.
+- **jemalloc via `LD_PRELOAD`.** e3nn's GPU forward pass trips a glibc-allocator
+  corruption (`free(): corrupted unsorted chunks`) on aarch64; preloading
+  `libjemalloc.so.2` resolves it cleanly. This is an allocator interaction, not a
+  CUDA problem.
+
+Run exactly as on x86 — `docker run --gpus all ...` — the entrypoint handles the
+rest. FP64 note: GB10 double-precision throughput is low (~0.4 TFLOP/s measured,
+~34× below FP32), so keep MACE geometry-opt in float32 on the GPU where
+screening accuracy suffices.
+
+**Building the arm64 image:** the `[cu13]` stack is large (~17 GB installed), so
+build on a native arm64 host with ample disk (a Spark itself, or an arm64 CI
+runner) rather than QEMU-emulating it on a small x86 runner.

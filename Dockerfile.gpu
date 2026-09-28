@@ -11,16 +11,26 @@ FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
+# libjemalloc2: the aarch64 allocator fix for the e3nn GPU forward pass on Grace
+# (see docker-entrypoint.sh). Harmless on x86 (not preloaded there).
 RUN apt-get update && apt-get install -y \
-    curl gcc g++ libxrender1 libxext6 libgomp1 libopenblas-dev \
+    curl gcc g++ libxrender1 libxext6 libgomp1 libopenblas-dev libjemalloc2 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # ALCHEMI Toolkit (CUDA 13 stack). This pulls a CUDA-13 build of torch plus the
 # bundled NVIDIA CUDA libraries and mace-torch. Installing into a fresh image
 # (no pre-existing torch/torchvision) avoids the version conflicts you hit when
-# layering it onto a Deep Learning AMI.
+# layering it onto a Deep Learning AMI. The cu13 torch wheels carry sm_120
+# kernels that forward-compat to GB10's sm_121 — verified relaxing MACE-MPA-0 on
+# a DGX Spark (2026-09-28), so no source-built torch is needed.
 RUN pip install --no-cache-dir "nvalchemi-toolkit[cu13]" "mace-torch>=0.3.10" \
       --extra-index-url https://pypi.nvidia.com
+
+# ANI-2x potential (torchani). --no-deps so it can't downgrade the cu13 torch the
+# toolkit just installed (torchani otherwise pulls a plain torch==2.14 and breaks
+# the CUDA build). Its optional cuaev CUDA extension is not built here — ANI-2x
+# runs the pure-torch path, which is fine on GPU.
+RUN pip install --no-cache-dir --no-deps torchani
 
 # App deps. torch + ase already come from the toolkit stack above, so install
 # only the rest here (do NOT reinstall torch — it would clobber the cu13 build).
@@ -29,6 +39,8 @@ RUN pip install --no-cache-dir \
 
 COPY app/ app/
 COPY main.py .
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 RUN useradd -m -u 1000 appuser && \
     mkdir -p /app/scratch /home/appuser/.cache && \
@@ -43,4 +55,7 @@ EXPOSE 8032
 HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
     CMD curl -f http://localhost:8032/health || exit 1
 
+# The entrypoint applies the Grace/aarch64 workarounds (OMP bound + jemalloc)
+# before launching; on x86 it's a passthrough.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
 CMD ["python", "main.py"]
